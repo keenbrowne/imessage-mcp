@@ -21,6 +21,40 @@ function conversationIds(result: Awaited<ReturnType<LocalToolRuntime["call"]>>) 
 }
 
 describe("fact-recovery paths", () => {
+  it("keeps serving after index and unrelated-table schema changes", async () => {
+    const { fixture, runtime, close } = setup();
+    try {
+      const before = conversationIds(await runtime.call("list_conversations", {}));
+      await runtime.search.ensure(true);
+      const writer = new Database(fixture.databasePath);
+      try {
+        writer.exec("CREATE INDEX recovery_message_date ON message(date)");
+        writer.exec("CREATE TABLE unrelated_metadata (value TEXT)");
+      } finally { writer.close(); }
+      expect(conversationIds(await runtime.call("list_conversations", {}))).toEqual(before);
+      const search = await runtime.call("search_messages", { query: "hello", scopes: ["text"], mode: "substring", order: "newest", limit: 5, allow_partial: true });
+      expect(search.isError, JSON.stringify(search.structuredContent)).toBeUndefined();
+      const writerAgain = new Database(fixture.databasePath);
+      try { writerAgain.exec("DROP INDEX recovery_message_date"); }
+      finally { writerAgain.close(); }
+      expect(conversationIds(await runtime.call("list_conversations", {}))).toEqual(before);
+    } finally { close(); }
+  });
+
+  it("still rejects relevant column changes until the schema is reloaded", async () => {
+    const { fixture, runtime, close } = setup();
+    try {
+      const writer = new Database(fixture.databasePath);
+      try { writer.exec("ALTER TABLE message ADD COLUMN future_column TEXT"); }
+      finally { writer.close(); }
+      for (let attempt = 0; attempt < 2; attempt++) {
+        expect(await runtime.call("list_conversations", {})).toMatchObject({
+          isError: true, structuredContent: { error: { reason: "DATABASE_CHANGED" } },
+        });
+      }
+    } finally { close(); }
+  });
+
   it.each(["identical", "different", "unique"])(
     "scopes an exact address without expanding %s Contacts records",
     async (cards) => {

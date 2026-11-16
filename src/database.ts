@@ -378,7 +378,7 @@ export class DatabaseContext {
   readonly capabilities: SchemaCapabilities;
   readonly sourceMode: "live" | "copy";
   private readonly fileIdentity: { device: bigint; inode: bigint };
-  private readonly schemaVersion: number;
+  private schemaVersion: number;
   private readonly observer: Database.Database;
   private readonly queryConnection: Database.Database;
   // The search index builds on its own connection so its long read snapshot
@@ -497,9 +497,18 @@ export class DatabaseContext {
   }
 
   private assertSchemaVersion(): void {
-    if (this.observedSchemaVersion() !== this.schemaVersion) {
-      throw new ImessageMcpError("DATABASE_CHANGED", "database schema changed while the server was running");
+    if (this.observedSchemaVersion() === this.schemaVersion) return;
+    // SQLite's schema cookie also changes for indexes and unrelated tables.
+    // Verify the columns we actually use before accepting a new cookie. Read
+    // both in one snapshot so a concurrent migration cannot mix generations.
+    const verified = this.observer.transaction(() => ({
+      version: this.observedSchemaVersion(),
+      capabilities: inspectSchema(this.observer),
+    }))();
+    if (!this.capabilities || verified.capabilities.schema_fingerprint !== this.capabilities.schema_fingerprint) {
+      throw new ImessageMcpError("DATABASE_CHANGED", "Messages tables or columns changed while the server was running; restart the server to reload its schema and search index");
     }
+    this.schemaVersion = verified.version;
   }
 
   private readFileIdentity(reason: "DATABASE_UNAVAILABLE" | "DATABASE_CHANGED"): { device: bigint; inode: bigint } {

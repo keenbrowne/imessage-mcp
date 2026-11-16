@@ -19,6 +19,8 @@ Read-only. Runs on your Mac. No accounts, no cloud service, nothing to compile.
 
 **Requirements:** macOS 14 or newer. Node.js 24.16 or newer for `npx` installs (Claude Desktop brings its own). Use Node 24 LTS for encrypted cache support. Runtimes without SQLite checkpoint APIs, including Node 25, search in memory and rebuild after a restart; `doctor` reports this.
 
+Periodic server restarts are unnecessary. Changes to SQLite indexes or unrelated tables are accepted automatically after verifying the Messages table columns. If `DATABASE_CHANGED` reports that Messages tables or columns changed, restart the server to reload its schema and search index. A cursor-related `DATABASE_CHANGED` instead requires starting a new traversal or sync without the old cursor.
+
 Standard config, for any client that reads `mcpServers` JSON:
 
 ```json
